@@ -14,6 +14,7 @@
 # limitations under the License.
 """Atheris is a coverage-guided Python fuzzing engine."""
 
+import importlib
 import sys
 from typing import List
 
@@ -39,6 +40,26 @@ from .native import Mutate  # type: ignore[import]
 from .native import Setup  # type: ignore[import]
 from .native import UpdateCounterArrays  # type: ignore[import]
 from .utils import path
+
+
+_LAZY_EXPORTS = {
+    "CrashMinimizer": ("crash", "CrashMinimizer"),
+    "CrashStore": ("crash", "CrashStore"),
+    "TargetRunner": ("crash", "TargetRunner"),
+    "export_corpus": ("corpus", "export_corpus"),
+    "import_corpus": ("corpus", "import_corpus"),
+}
+
+
+def __getattr__(name):
+  """Lazily exposes optional crash-management APIs."""
+  if name not in _LAZY_EXPORTS:
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+  module_name, attribute_name = _LAZY_EXPORTS[name]
+  module = importlib.import_module(f".{module_name}", __name__)
+  value = getattr(module, attribute_name)
+  globals()[name] = value
+  return value
 
 
 # PyInstaller Support

@@ -180,6 +180,15 @@ In order for fuzzing native extensions to be effective, your native extensions
 must be instrumented. See [Native Extension Fuzzing](https://github.com/google/atheris/blob/master/native_extension_fuzzing.md)
 for instructions.
 
+### Crash Deduplication, Minimization, and Corpus Migration
+
+For long-running fuzzing jobs, Atheris provides an optional crash manager that
+replays crash artifacts, groups them by observable stack features, persists the
+groups across restarts, minimizes accepted inputs under explicit budgets, and
+exports/imports corpora with per-entry corruption recovery. Existing command
+line flags and default fuzzing behavior are unchanged. See
+[Crash Deduplication and Corpus Management](crash_management.md).
+
 ### Structure-aware Fuzzing
 
 Atheris is based on a coverage-guided mutation-based fuzzer (LibFuzzer). This
