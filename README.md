@@ -283,6 +283,17 @@ using protocol buffers.
 See the documentation for
 [atheris_libprotobuf_mutator](contrib/libprotobuf_mutator/README.md).
 
+## Post-run triage of corpus and crash artifacts
+
+After a long campaign, corpus and crash directories are mostly duplicate or
+near-duplicate inputs. The opt-in, pure-Python `atheris.triage` package
+organizes them into a minimal reviewable set: exact and near-duplicate corpus
+inputs are clustered into families, crashes are grouped by exception type and
+a normalized call chain, and the whole result is stored content-addressed and
+transactions so it is reproducible and fully reversible. It does not change any
+live fuzzing behavior or original artifact paths. See
+[triage.md](./triage.md) for details.
+
 ## Integration with OSS-Fuzz
 
 Atheris is fully supported by [OSS-Fuzz](https://github.com/google/oss-fuzz), Google's continuous fuzzing service for open source projects. For integrating with OSS-Fuzz, please see [https://google.github.io/oss-fuzz/getting-started/new-project-guide/python-lang](https://google.github.io/oss-fuzz/getting-started/new-project-guide/python-lang).

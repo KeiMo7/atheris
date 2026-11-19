@@ -393,7 +393,17 @@ elif (3, 10) <= PYTHON_VERSION <= (3, 10):
 
 
 elif (3, 11) <= PYTHON_VERSION:
-  from .native import _generate_codetable  # pytype: disable=import-error
+  try:
+    from .native import _generate_codetable  # pytype: disable=import-error
+  except ImportError:
+    # Pure-Python environments without a compiled Atheris build (the triage
+    # package needs to import there). The function is only required when
+    # instrumenting bytecode, which itself needs the native extension.
+    def _generate_codetable(*_args, **_kwargs):
+      raise ImportError(
+          "The Atheris native extension is not available; code table "
+          "generation requires a compiled build.")
+
   def get_lnotab(code, listing):
     ret = _generate_codetable(code, listing)
     return ret
@@ -456,7 +466,13 @@ if PYTHON_VERSION < (3, 11):
 
 
 if (3, 11) <= PYTHON_VERSION:
-  from .native import _generate_exceptiontable  # pytype: disable=import-error
+  try:
+    from .native import _generate_exceptiontable  # pytype: disable=import-error
+  except ImportError:
+    def _generate_exceptiontable(*_args, **_kwargs):
+      raise ImportError(
+          "The Atheris native extension is not available; exception table "
+          "generation requires a compiled build.")
 
   def generate_exceptiontable(original_code, exception_table_entries):  # noqa: F811
     return _generate_exceptiontable(original_code, exception_table_entries)

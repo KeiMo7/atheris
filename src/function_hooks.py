@@ -19,7 +19,13 @@ import sys
 import typing
 from typing import Any, AnyStr, Callable, Dict, Iterator, List, Match, Optional, Pattern, Set, Tuple, Union
 
-from .native import hook_str_module  # type: ignore[import]
+try:
+  from .native import hook_str_module  # type: ignore[import]
+except ImportError:  # Pure-Python environments without a compiled native build.
+  def hook_str_module(*_args, **_kwargs):  # type: ignore[misc]
+    raise ImportError(
+        "The Atheris native extension is not available in this environment; "
+        "the str hook requires a compiled libFuzzer/clang build.")
 
 try:
   import re._parser as sre_parse  # type: ignore[import]
