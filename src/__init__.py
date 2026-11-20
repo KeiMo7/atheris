@@ -38,6 +38,7 @@ from .native import FuzzedDataProvider  # type: ignore[import]
 from .native import Mutate  # type: ignore[import]
 from .native import Setup  # type: ignore[import]
 from .native import UpdateCounterArrays  # type: ignore[import]
+from . import repro  # noqa: F401  Crash-sample replay and minimization.
 from .utils import path
 
 

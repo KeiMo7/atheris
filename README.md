@@ -283,6 +283,54 @@ using protocol buffers.
 See the documentation for
 [atheris_libprotobuf_mutator](contrib/libprotobuf_mutator/README.md).
 
+### Replaying and Minimizing Crash Samples
+
+An archived crash file is only useful if it can be replayed deterministically
+and reduced without changing the underlying defect. `atheris.repro` provides
+this on top of the ordinary `TestOneInput(data: bytes)` convention - no fuzzing
+loop is started, and the target is invoked exactly as libFuzzer invokes it.
+
+Each replay runs in a fresh interpreter subprocess, so native counters and any
+module-level state start at a deterministic zero state, and a fatal native
+signal is reported as a structured verdict instead of killing the caller.
+Crash signatures are built solely from runtime-observable information (exit
+kind, exception type and traceback frames, or fatal signal) - never from sample
+hashes or file paths.
+
+```python
+from atheris import repro
+
+# Identify the target by importable location (or pass the callable itself).
+target = repro.TargetSpec(
+    module="my_fuzzer", qualname="TestOneInput",
+    target_search_path=("/path/to/target",))
+
+# Replay one archived sample and inspect the verdict + stable signature.
+result = repro.replay_sample(target, open("crash-xxxx", "rb").read())
+print(result.verdict.triggered, result.verdict.kind, result.verdict.signature)
+
+# Minimize with signature preservation as the sole success condition. Every
+# accepted candidate is independently replayed in a fresh process. On any
+# failure (signature drift, timeout, resource exhaustion) the report falls
+# back to the original bytes and states the reason.
+report = repro.minimize_sample(target, open("crash-xxxx", "rb").read())
+if report.status == "success":
+  repro.export_sample("crash.min", report.data)
+  # original/final lengths, signature, attempts and discarded-fragment counts
+  # are all available on the report for auditing.
+
+# Re-importing and replaying an exported sample yields the same signature.
+same = repro.replay_sample(target, repro.import_sample("crash.min"))
+assert same.verdict.signature == report.signature
+
+# Batched processing isolates each item; one failure never affects the rest.
+reports = repro.batch_minimize(target, [sample1, sample2], max_workers=2)
+```
+
+A sample that does not trigger is reported as `status="unreproducible"` rather
+than as a zero-length "success"; a target that fails during initialization is
+an `environment_error` and never enters minimization.
+
 ## Integration with OSS-Fuzz
 
 Atheris is fully supported by [OSS-Fuzz](https://github.com/google/oss-fuzz), Google's continuous fuzzing service for open source projects. For integrating with OSS-Fuzz, please see [https://google.github.io/oss-fuzz/getting-started/new-project-guide/python-lang](https://google.github.io/oss-fuzz/getting-started/new-project-guide/python-lang).
