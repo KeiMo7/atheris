@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 Google LLC
+ * Copyright 2026 Google LLC
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,20 +41,79 @@ std::function<py::bytes(py::bytes data, size_t max_size, unsigned int seed)>&
         unsigned int seed)>([](py::bytes data, size_t max_size,
                                unsigned int seed) -> py::bytes {
       // This function should never be called.
-      abort();
+      _exit(-1);
     });
+
+// Set once a fatal strategy failure has been reported, so it is only printed
+// once even if the engine retries mutations.
+bool custom_mutator_error_reported = false;
 }  // namespace
 
 NO_SANITIZE
 size_t custom_mutator(uint8_t* data, size_t size, size_t max_size,
                       unsigned int seed) {
-  std::string new_data = custom_mutator_global(
-      py::bytes(reinterpret_cast<const char*>(data), size), max_size, seed);
-  if (new_data.size() > max_size) {
-    throw std::runtime_error(
-        "The mutated data cannot be larger than max_size.");
+  // llvm::Optional-like explicit "rejected" signal.  The Python invoker returns
+  // an empty byte string when a *recoverable* contract violation (non-bytes
+  // result or an oversized result) occurs; the engine treats a zero-length
+  // result as "this mutation produced nothing" and simply tries another one.
+  //
+  // Nothing is copied into `data` until the result has been validated by the
+  // Python layer and re-checked here, so an oversized result can never reach
+  // the engine's input buffer.
+  py::bytes result;
+  try {
+    result = custom_mutator_global(
+        py::bytes(reinterpret_cast<const char*>(data), size), max_size, seed);
+  } catch (const py::error_already_set& ex) {
+    // A Python exception that escaped the strategy wrapper: the strategy
+    // raised, or the wrapper itself failed.  The wrapper has already attached
+    // the strategy name and original traceback.  Report it and stop this run
+    // instead of letting the exception cross the C boundary (which would
+    // abort the process with a signal and no diagnostic).
+    if (!custom_mutator_error_reported) {
+      custom_mutator_error_reported = true;
+      std::cerr << "\n"
+                << "=== Fatal custom mutator error: ===" << std::endl;
+      py::module traceback = py::module::import("traceback");
+      try {
+        py::object formatted = traceback.attr("format_exception")(
+            ex.type(), ex.value(), ex.trace());
+        std::cerr << py::str("").attr("join")(formatted).cast<std::string>()
+                  << std::endl;
+      } catch (...) {
+        std::cerr << ex.what() << std::endl;
+      }
+      std::cerr << "Stopping the fuzzer: the selected custom mutation "
+                   "strategy failed. Other registered strategies are "
+                   "unaffected."
+                << std::endl;
+    }
+    // Terminate the fuzzing run.  _exit() is used rather than throwing because
+    // libFuzzer is compiled without C++ exception support on some platforms;
+    // letting an exception escape here is what used to kill the process with
+    // SIGABRT and leave no actionable message.
+    _exit(1);
+  } catch (const std::exception& ex) {
+    if (!custom_mutator_error_reported) {
+      custom_mutator_error_reported = true;
+      std::cerr << "\n=== Fatal custom mutator error: ===" << std::endl
+                << ex.what() << std::endl;
+    }
+    _exit(1);
   }
-  memcpy(data, new_data.data(), new_data.size());
+
+  std::string new_data = result;
+  if (new_data.size() > max_size) {
+    // Defense in depth: the Python layer already rejects oversized results,
+    // but never write unvalidated data into the engine buffer.
+    std::cerr << "WARNING: custom mutator returned " << new_data.size()
+              << " bytes, which exceeds max_size=" << max_size
+              << "; the mutation was rejected." << std::endl;
+    return 0;
+  }
+  if (new_data.size() > 0) {
+    memcpy(data, new_data.data(), new_data.size());
+  }
   return new_data.size();
 }
 

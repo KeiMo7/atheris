@@ -17,5 +17,6 @@ hiddenimports = [
     "atheris.core_without_libfuzzer",
     "atheris.custom_crossover",
     "atheris.custom_mutator",
+    "atheris.custom_mutators",
     "atheris.native",
 ]

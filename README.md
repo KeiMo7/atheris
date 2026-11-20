@@ -274,6 +274,108 @@ Custom crossover functions (equivalent to `LLVMFuzzerCustomCrossOver`) are also
 supported. You can pass the custom crossover function to the invocation of
 `atheris.Setup`. See its usage in [custom_crossover_fuzz_test.py](src/custom_crossover_fuzz_test.py).
 
+#### Named custom mutation strategies
+
+When several targets share one process, the single `custom_mutator=` callback
+is inconvenient: switching targets means editing code and restarting. Register
+each strategy under a name before startup and select the one to run:
+
+```python
+import atheris
+import sys
+
+def json_mutator(data, max_size, seed):
+  ...
+
+def xml_mutator(data, max_size, seed):
+  ...
+
+atheris.register_custom_mutator("json", json_mutator)
+atheris.register_custom_mutator("xml", xml_mutator)
+
+# Pick the strategy at startup. The name may come from the command line
+# (-atheris_custom_mutator=NAME) or from an explicit argument:
+atheris.Setup(sys.argv, TestOneInput,
+              custom_mutator_name="json" if "--xml" not in sys.argv else "xml")
+atheris.Fuzz()
+```
+
+See [named_mutator_example.py](example_fuzzers/named_mutator_example.py) for a
+complete, runnable example that registers two strategies and accepts
+`-atheris_custom_mutator=NAME` on the command line.
+
+`atheris.register_custom_mutator` may also be used as a decorator
+(`@atheris.register("json")`), and `atheris.register_custom_mutators({...})`
+registers several at once (all-or-nothing). The legacy
+`custom_mutator=<callable>` form is unchanged and keeps working; a strategy name
+may also be passed directly as `custom_mutator="json"`.
+
+Selecting an unregistered name aborts startup with an error that lists the
+available names. Registration and selection are fixed once `Setup()` succeeds:
+later attempts to register, unregister, or call `Setup()` again raise
+`atheris.RegistryFrozenError` and leave the running configuration untouched.
+The selected name can also be supplied as `-atheris_custom_mutator=NAME` (or
+`-atheris_custom_mutator NAME`) on the command line, so a pipeline can switch
+strategies without touching the fuzzer source; the argument is consumed by
+Atheris and never reaches libFuzzer.
+
+A strategy that declares `requires_dictionary=True` refuses to start if no
+dictionary was supplied, and the error says so explicitly.
+
+Contract violations are reported with the strategy's name:
+
+* returning more than `max_size` bytes raises
+  `atheris.CustomMutatorOutputTooLongError` (a
+  `atheris.CustomMutatorContractError`); during fuzzing the offending mutation
+  is rejected and the process keeps running;
+* returning a non-`bytes` value raises `atheris.CustomMutatorTypeError`, which
+  names the expected type;
+* raising raises `atheris.CustomMutatorRuntimeError`, carrying the strategy
+  name and the original traceback. During fuzzing this stops the run with that
+  diagnostic instead of dying from a signal, and the other registered
+  strategies remain intact.
+
+The same checks are available synchronously through
+`atheris.invoke_custom_mutator(name, data, max_size, seed)`, which raises the
+errors above to its caller.
+
+#### Dictionaries
+
+A libFuzzer dictionary can be given on the command line (`-dict=FILE`, or
+`-dict FILE`) or through `atheris.Setup(..., dictionary=FILE)`. Atheris parses
+it exactly once, at startup, and hands the engine the serialized form of that
+same parse, so the built-in mutation path and custom strategies share one
+ordered set of entries -- strategies read it with
+`atheris.get_dictionary_entries()` / `atheris.get_dictionary()` and never keep
+their own copy.
+
+The format is one entry per line. Blank lines and lines starting with `#` are
+ignored; libFuzzer's quoted form (`"key"`, `key="value"`) is accepted, as is a
+bare unquoted line. `\\`, `\"`, `\n`, `\r`, `\t`, `\0` and `\xAB` escapes are
+decoded. Entry order is preserved and is printed at startup, so
+dictionary-assisted mutation sequences are reproducible for a fixed `-seed`.
+
+A missing file or a malformed line aborts startup with a
+`atheris.DictionaryError` that names the file and, for bad lines, the 1-based
+line number; the fuzzing loop is never entered. The parsed entries are exposed
+by `atheris.load_dictionary(path)` and rendered by
+`Dictionary.format_entries()`.
+
+Whether a generic `atheris.Mutate()` call made from inside a strategy uses the
+dictionary is fixed at startup (it does exactly when a dictionary was
+provided), and the startup log states it:
+
+```
+INFO: Custom mutator: 'json'
+INFO: atheris.Mutate() calls made inside the custom mutator use the dictionary (decision fixed at startup).
+INFO: Dictionary: 2 entries from words.dict
+INFO: Dictionary sha256: ...
+INFO: atheris.Mutate() uses the dictionary.
+```
+
+Without a dictionary none of this is printed and the engine behaves exactly as
+before.
+
 #### Structure-aware Fuzzing with Protocol Buffers
 
 [libprotobuf-mutator](https://github.com/google/libprotobuf-mutator) has
@@ -347,9 +449,38 @@ This function is experimental.
 #### `Setup(args, test_one_input, internal_libfuzzer=None)`
  - `args`: A list of strings: the process arguments to pass to the fuzzer, typically `sys.argv`. This argument list may be modified in-place, to remove arguments consumed by the fuzzer.
    See [the LibFuzzer docs](https://llvm.org/docs/LibFuzzer.html#options) for a list of such options.
+   A `-dict=FILE` argument is parsed by Atheris; see the dictionary section above.
  - `test_one_input`: your fuzzer's entry point. Must take a single `bytes` argument. This will be repeatedly invoked with a single bytes container.
  - `internal_libfuzzer`: Indicates whether libfuzzer will be provided by atheris or by an external library (see [native_extension_fuzzing.md](./native_extension_fuzzing.md)). If unspecified, Atheris will determine this
    automatically. If fuzzing pure Python, leave this as `True`.
+ - `custom_mutator`: an optional mutation strategy: a callable
+   `(data, max_size, seed) -> bytes`, a name registered with
+   `register_custom_mutator`, or a `MutationStrategy`.
+ - `custom_mutator_name`: of the registered strategy to run (also accepted as
+   `mutator_name`). An unregistered name aborts startup and lists the
+   available names.
+ - `dictionary`: an optional dictionary path or parsed `Dictionary` (also
+   accepted as `dict_path`). A malformed or missing dictionary aborts startup
+   and reports the line number.
+ - `custom_crossover`: an optional crossover callable
+   `(data1, data2, max_out_size, seed) -> bytes`.
+
+#### Custom mutator registry and dictionaries
+
+ - `register_custom_mutator(name, mutator, requires_dictionary=False)`,
+   `register_custom_mutators(mapping)`, `unregister_custom_mutator(name)`:
+   modify the strategy registry. Only allowed before `Setup()`; afterwards
+   they raise `RegistryFrozenError`.
+ - `registered_names()`, `registered_custom_mutators()`, `get_registered(name)`:
+   inspect the registry.
+ - `load_dictionary(path)`, `parse_dictionary(text)`:
+   parse a dictionary eagerly; cache-hit errors are `DictionaryError`.
+ - `get_dictionary()`, `get_dictionary_entries()`: the single shared dictionary
+   visible to built-in mutation and to strategies.
+ - `invoke_custom_mutator(name_or_callable, data, max_size, seed)`:
+   invoke a strategy synchronously with the same contract as the engine.
+ - `DescribeMutationConfiguration()`: the startup summary (strategy name,
+   dictionary size and digest, and whether in-strategy `Mutate()` uses it).
 
 #### `Fuzz()`
 

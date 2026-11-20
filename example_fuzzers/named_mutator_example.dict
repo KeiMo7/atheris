@@ -1,0 +1,7 @@
+# A dictionary for named_mutator_example.py.  Lines starting with '#' and blank
+# lines are ignored; each remaining line is one entry.  Escapes such as \x00 are
+# decoded, and the order of the entries is preserved.
+"FU"
+"Boom"
+"\x78\x9c"
+"\x78\xda"
